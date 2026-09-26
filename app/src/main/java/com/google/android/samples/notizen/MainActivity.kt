@@ -111,6 +111,15 @@ class MainActivity : ComponentActivity() {
         */
     }
 
+    override fun onResume() {
+        super.onResume()
+        // WebView background execution is not guaranteed. Wake the web-owned outbox on return.
+        activeWebView?.evaluateJavascript(
+            "window.dispatchEvent(new Event('notizen-resume'));",
+            null
+        )
+    }
+
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
