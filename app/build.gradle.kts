@@ -36,12 +36,14 @@ android {
     kotlinOptions {
         jvmTarget = "11"
     }
+    testOptions { unitTests.isIncludeAndroidResources = true }
     buildFeatures {
         compose = true
     }
 }
 
 dependencies {
+    implementation("androidx.webkit:webkit:1.14.0")
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.activity.compose)
@@ -54,6 +56,7 @@ dependencies {
     implementation(libs.androidx.browser)
     implementation(libs.androidx.compose.runtime)
     testImplementation(libs.junit)
+    testImplementation("org.robolectric:robolectric:4.14.1")
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
     androidTestImplementation(platform(libs.androidx.compose.bom))

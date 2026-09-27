@@ -97,9 +97,23 @@ data class TabInstance(
 
 class MainActivity : ComponentActivity() {
     private var activeWebView: WebView? = null
+    private lateinit var notificationBridge: NotificationBridge
+    private var notificationNote by mutableStateOf<String?>(null)
+
+    private fun handleNotificationIntent(intent: Intent) {
+        if (intent.action != NotificationBridge.OPEN_NOTE) return
+        val id = intent.getStringExtra(NotificationBridge.NOTE_ID) ?: return
+        if (NotificationBridge.validNoteId(id)) notificationNote = id
+        intent.removeExtra(NotificationBridge.NOTE_ID)
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        notificationBridge = NotificationBridge(this) { view ->
+            lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED) &&
+                view === activeWebView && view.isShown && view.hasWindowFocus()
+        }
+        handleNotificationIntent(intent)
         enableEdgeToEdge()
 
         showWebsite(url = "https://notizen.dev", enableTabs = true)
@@ -123,6 +137,7 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
+        handleNotificationIntent(intent)
         // Uncomment this section (2/7) to implement Google OAuth in a WebView.
         /*
         handleDeepLink(intent)
@@ -137,6 +152,9 @@ class MainActivity : ComponentActivity() {
                         initialUrl = url,
                         enableTabs = enableTabs,
                         onWebViewCreated = { activeWebView = it },
+                        initializeWebView = { notificationBridge.install(it) },
+                        notificationNote = notificationNote,
+                        consumeNotification = { notificationNote = null },
                         modifier = Modifier.padding(innerPadding).fillMaxSize()
                     )
                 }
@@ -208,6 +226,9 @@ fun MainScreen(
     initialUrl: String,
     enableTabs: Boolean,
     onWebViewCreated: (WebView) -> Unit,
+    initializeWebView: (WebView) -> Unit,
+    notificationNote: String?,
+    consumeNotification: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -221,7 +242,8 @@ fun MainScreen(
             context = context,
             initialUrl = url,
             onTitleReceived = { title -> newTab?.title?.value = title },
-            isOfflineState = isOfflineState
+            isOfflineState = isOfflineState,
+            initialize = initializeWebView
         )
         val tab = TabInstance(webView = webView, url = mutableStateOf(url))
         newTab = tab
@@ -244,6 +266,15 @@ fun MainScreen(
     LaunchedEffect(Unit) {
         if (tabState.isEmpty()) {
             createAndAddTab()
+        }
+    }
+
+    LaunchedEffect(notificationNote) {
+        notificationNote?.let { id ->
+            val target = "${NotificationBridge.ORIGIN}/notes/$id"
+            val existing = tabState.indexOfFirst { it.webView.url == target }
+            if (existing >= 0) activeTabIndex = existing else createAndAddTab(target)
+            consumeNotification()
         }
     }
 
@@ -356,7 +387,8 @@ fun createWebView(
     context: Context,
     initialUrl: String,
     onTitleReceived: (String) -> Unit = {},
-    isOfflineState: MutableState<Boolean>? = null
+    isOfflineState: MutableState<Boolean>? = null,
+    initialize: (WebView) -> Unit = {}
 ): WebView {
     return WebView(context).apply {
         layoutParams = ViewGroup.LayoutParams(
@@ -415,6 +447,7 @@ fun createWebView(
             }
         }
 
+        initialize(this)
         loadUrl(initialUrl)
     }
 }
