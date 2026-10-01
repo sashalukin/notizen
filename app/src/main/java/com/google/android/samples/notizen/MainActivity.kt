@@ -118,11 +118,10 @@ class MainActivity : ComponentActivity() {
 
         showWebsite(url = "https://notizen.dev", enableTabs = true)
 
-        // Uncomment this section (1/7) to implement Google OAuth in a WebView.
+        // Google OAuth via Custom Tab (1/7).
         // Requires additional changes on the backend which are already implemented on https://notizen.dev.
-        /*
         handleDeepLink(intent)
-        */
+
     }
 
     override fun onResume() {
@@ -138,10 +137,9 @@ class MainActivity : ComponentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         handleNotificationIntent(intent)
-        // Uncomment this section (2/7) to implement Google OAuth in a WebView.
-        /*
+        // Google OAuth via Custom Tab (2/7).
         handleDeepLink(intent)
-         */
+
     }
 
     private fun showWebsite(url: String, enableTabs: Boolean) {
@@ -162,8 +160,8 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    // Uncomment this section (3/7) to implement Google OAuth in a WebView.
-    /*private fun handleDeepLink(intent: Intent?) {
+    // Google OAuth via Custom Tab (3/7).
+    private fun handleDeepLink(intent: Intent?) {
         val uri = intent?.data ?: return
         if (uri.scheme != "notizen" || uri.host != "auth") return
 
@@ -207,10 +205,10 @@ class MainActivity : ComponentActivity() {
                 e.printStackTrace()
             }
         }
-    }*/
+    }
 
-    // Uncomment this section (4/7) to implement Google OAuth in a WebView.
-    /*companion object {
+    // Google OAuth via Custom Tab (4/7).
+    companion object {
         var codeVerifier: String? = null
 
         fun generateAndStoreVerifier(): String {
@@ -218,7 +216,7 @@ class MainActivity : ComponentActivity() {
             codeVerifier = verifier
             return PKCEUtilsShowcase.generateCodeChallenge(verifier)
         }
-    }*/
+    }
 }
 
 @Composable
@@ -341,8 +339,8 @@ open class NotizenWebViewClient(
         }
     }
 
-    // Uncomment this section (5/7) to implement Google OAuth in a WebView.
-    /*override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
+    // Google OAuth via Custom Tab (5/7).
+    override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
         val requestUrl = request?.url?.toString() ?: return false
         if (requestUrl.contains("/api/auth/signin/google") || requestUrl.contains("accounts.google.com/v3/signin") || requestUrl.contains("accounts.google.com/o/oauth2") || requestUrl.contains("accounts.google.com/signin/oauth")) {
             val challenge = MainActivity.generateAndStoreVerifier()
@@ -353,7 +351,7 @@ open class NotizenWebViewClient(
             return true
         }
         return false
-    }*/
+    }
 }
 
 fun applyBaseWebViewSettings(webView: WebView, context: Context) {
@@ -553,8 +551,8 @@ fun WebViewContainer(
     }
 }
 
-// Uncomment this section (6/7) to implement Google OAuth in a WebView.
-/*object PKCEUtilsShowcase {
+// Google OAuth via Custom Tab (6/7).
+object PKCEUtilsShowcase {
     fun generateCodeVerifier(): String {
         val random = SecureRandom()
         val bytes = ByteArray(32)
@@ -568,4 +566,4 @@ fun WebViewContainer(
         val digest = messageDigest.digest(bytes)
         return Base64.encodeToString(digest, Base64.URL_SAFE or Base64.NO_PADDING or Base64.NO_WRAP)
     }
-}*/
+}
