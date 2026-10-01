@@ -20,11 +20,9 @@ import android.app.DownloadManager
 import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
-import android.net.Uri
 import android.os.Bundle
 import android.os.Environment
 import android.os.Message
-import android.util.Base64
 import android.view.ViewGroup
 import android.webkit.CookieManager
 import android.webkit.PermissionRequest
@@ -38,7 +36,6 @@ import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import androidx.browser.customtabs.CustomTabsIntent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -81,12 +78,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.net.toUri
 import com.google.android.samples.notizen.ui.theme.NotizenTheme
-import java.net.HttpURLConnection
-import java.net.URL
-import java.security.MessageDigest
-import java.security.SecureRandom
 import java.util.UUID
-import kotlin.concurrent.thread
 
 data class TabInstance(
     val id: String = UUID.randomUUID().toString(),
@@ -118,9 +110,6 @@ class MainActivity : ComponentActivity() {
 
         showWebsite(url = "https://notizen.dev", enableTabs = true)
 
-        // Google OAuth via Custom Tab (1/7).
-        // Requires additional changes on the backend which are already implemented on https://notizen.dev.
-        handleDeepLink(intent)
 
     }
 
@@ -137,8 +126,6 @@ class MainActivity : ComponentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         handleNotificationIntent(intent)
-        // Google OAuth via Custom Tab (2/7).
-        handleDeepLink(intent)
 
     }
 
@@ -160,63 +147,6 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    // Google OAuth via Custom Tab (3/7).
-    private fun handleDeepLink(intent: Intent?) {
-        val uri = intent?.data ?: return
-        if (uri.scheme != "notizen" || uri.host != "auth") return
-
-        val code = uri.getQueryParameter("code") ?: return
-        val verifier = codeVerifier
-
-        thread {
-            try {
-                val url = URL("https://notizen.dev/api/exchange")
-                val connection = url.openConnection() as HttpURLConnection
-                connection.requestMethod = "POST"
-                connection.setRequestProperty("Content-Type", "application/json")
-                connection.doOutput = true
-
-                val body = if (verifier != null) {
-                    """{"code":"$code","code_verifier":"$verifier"}"""
-                } else {
-                    """{"code":"$code"}"""
-                }
-                connection.outputStream.use { it.write(body.toByteArray()) }
-
-                if (connection.responseCode == 200) {
-                    val cookieHeaders = connection.headerFields["Set-Cookie"]
-
-                    if (cookieHeaders != null) {
-                        val cookieManager = CookieManager.getInstance()
-                        cookieManager.setAcceptCookie(true)
-
-                        for (cookie in cookieHeaders) {
-                            cookieManager.setCookie("https://notizen.dev", cookie)
-                        }
-                        cookieManager.flush()
-
-                        runOnUiThread {
-                            activeWebView?.loadUrl("https://notizen.dev/notes")
-                        }
-                    }
-                }
-                connection.disconnect()
-            } catch (e: Exception) {
-                e.printStackTrace()
-            }
-        }
-    }
-
-    // Google OAuth via Custom Tab (4/7).
-    companion object {
-        var codeVerifier: String? = null
-
-        fun generateAndStoreVerifier(): String {
-            val verifier = PKCEUtilsShowcase.generateCodeVerifier()
-            codeVerifier = verifier
-            return PKCEUtilsShowcase.generateCodeChallenge(verifier)
-        }
-    }
 }
 
 @Composable
@@ -339,19 +269,6 @@ open class NotizenWebViewClient(
         }
     }
 
-    // Google OAuth via Custom Tab (5/7).
-    override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
-        val requestUrl = request?.url?.toString() ?: return false
-        if (requestUrl.contains("/api/auth/signin/google") || requestUrl.contains("accounts.google.com/v3/signin") || requestUrl.contains("accounts.google.com/o/oauth2") || requestUrl.contains("accounts.google.com/signin/oauth")) {
-            val challenge = MainActivity.generateAndStoreVerifier()
-            val authUrl = "https://notizen.dev/android-signin?code_challenge=$challenge"
-            val customTabsIntent = CustomTabsIntent.Builder().setShowTitle(true).build()
-            customTabsIntent.launchUrl(context, Uri.parse(authUrl))
-            onDismissDialog?.invoke()
-            return true
-        }
-        return false
-    }
 }
 
 fun applyBaseWebViewSettings(webView: WebView, context: Context) {
@@ -551,19 +468,3 @@ fun WebViewContainer(
     }
 }
 
-// Google OAuth via Custom Tab (6/7).
-object PKCEUtilsShowcase {
-    fun generateCodeVerifier(): String {
-        val random = SecureRandom()
-        val bytes = ByteArray(32)
-        random.nextBytes(bytes)
-        return Base64.encodeToString(bytes, Base64.URL_SAFE or Base64.NO_PADDING or Base64.NO_WRAP)
-    }
-
-    fun generateCodeChallenge(verifier: String): String {
-        val bytes = verifier.toByteArray(Charsets.US_ASCII)
-        val messageDigest = MessageDigest.getInstance("SHA-256")
-        val digest = messageDigest.digest(bytes)
-        return Base64.encodeToString(digest, Base64.URL_SAFE or Base64.NO_PADDING or Base64.NO_WRAP)
-    }
-}

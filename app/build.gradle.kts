@@ -52,8 +52,6 @@ dependencies {
     implementation(libs.androidx.compose.ui.graphics)
     implementation(libs.androidx.compose.ui.tooling.preview)
     implementation(libs.androidx.compose.material3)
-    implementation("androidx.browser:browser:1.8.0")
-    implementation(libs.androidx.browser)
     implementation(libs.androidx.compose.runtime)
     testImplementation(libs.junit)
     testImplementation("org.robolectric:robolectric:4.14.1")
