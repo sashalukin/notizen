@@ -36,6 +36,12 @@ import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.lifecycle.ViewModelProvider
+import androidx.browser.customtabs.CustomTabsIntent
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -89,6 +95,7 @@ data class TabInstance(
 
 class MainActivity : ComponentActivity() {
     private var activeWebView: WebView? = null
+    private val oauth by lazy { ViewModelProvider(this)[OAuthState::class.java] }
     private lateinit var notificationBridge: NotificationBridge
     private var notificationNote by mutableStateOf<String?>(null)
 
@@ -109,8 +116,8 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
 
         showWebsite(url = "https://notizen.dev", enableTabs = true)
-
-
+        oauth.receive(intent)
+        if (OAuthContract.callbackCode(intent) != null) intent.data = null
     }
 
     override fun onResume() {
@@ -126,18 +133,39 @@ class MainActivity : ComponentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         handleNotificationIntent(intent)
-
+        oauth.receive(intent)
+        if (OAuthContract.callbackCode(intent) != null) intent.data = null
     }
 
     private fun showWebsite(url: String, enableTabs: Boolean) {
         setContent {
             NotizenTheme {
+                oauth.error?.let { message ->
+                    AlertDialog(onDismissRequest = { oauth.error = null },
+                        title = { Text("Sign-in") }, text = { Text(message) },
+                        confirmButton = { TextButton(onClick = { oauth.error = null }) { Text("OK") } })
+                }
+                if (oauth.pending != null) {
+                    AlertDialog(onDismissRequest = { oauth.cancel() },
+                        title = { Text("Signing in") },
+                        text = { Text(if (oauth.phase == "waiting") "Finish sign-in in the browser, then tap Open Notizen." else "Completing sign-in…") },
+                        confirmButton = { TextButton(enabled = oauth.phase != "installing", onClick = { oauth.cancel() }) { Text("Cancel") } })
+                }
                 Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
                     MainScreen(
                         initialUrl = url,
                         enableTabs = enableTabs,
                         onWebViewCreated = { activeWebView = it },
-                        initializeWebView = { notificationBridge.install(it) },
+                        initializeWebView = { view, tabId ->
+                            notificationBridge.install(view)
+                            installOAuthBridge(view) {
+                                oauth.begin(tabId)?.let { url ->
+                                    try { CustomTabsIntent.Builder().build().launchUrl(this@MainActivity, url) }
+                                    catch (_: Exception) { oauth.launchFailed() }
+                                }
+                            }
+                        },
+                        oauth = oauth,
                         notificationNote = notificationNote,
                         consumeNotification = { notificationNote = null },
                         modifier = Modifier.padding(innerPadding).fillMaxSize()
@@ -154,28 +182,37 @@ fun MainScreen(
     initialUrl: String,
     enableTabs: Boolean,
     onWebViewCreated: (WebView) -> Unit,
-    initializeWebView: (WebView) -> Unit,
+    initializeWebView: (WebView, String) -> Unit,
+    oauth: OAuthState,
     notificationNote: String?,
     consumeNotification: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
     val tabState = remember { mutableStateListOf<TabInstance>() }
-    var activeTabIndex by remember { mutableIntStateOf(0) }
+    var activeTabIndex by rememberSaveable { mutableIntStateOf(0) }
+    var savedTabs by rememberSaveable { mutableStateOf(arrayListOf<String>()) }
     val isOfflineState = remember { mutableStateOf(false) }
 
-    fun createAndAddTab(url: String = initialUrl) {
+    fun createAndAddTab(url: String = initialUrl, id: String = UUID.randomUUID().toString()) {
         var newTab: TabInstance? = null
         val webView = createWebView(
             context = context,
             initialUrl = url,
-            onTitleReceived = { title -> newTab?.title?.value = title },
+            onTitleReceived = { title ->
+                newTab?.let { tab ->
+                    tab.title.value = title
+                    tab.url.value = tab.webView.url ?: url
+                    savedTabs = ArrayList(tabState.flatMap { listOf(it.id, it.url.value) })
+                }
+            },
             isOfflineState = isOfflineState,
-            initialize = initializeWebView
+            initialize = { initializeWebView(it, id) }
         )
-        val tab = TabInstance(webView = webView, url = mutableStateOf(url))
+        val tab = TabInstance(id = id, webView = webView, url = mutableStateOf(url))
         newTab = tab
         tabState.add(tab)
+        savedTabs = ArrayList(tabState.flatMap { listOf(it.id, it.url.value) })
         activeTabIndex = tabState.lastIndex
     }
 
@@ -183,6 +220,9 @@ fun MainScreen(
         val index = tabState.indexOf(tab)
         if (index != -1) {
             tabState.removeAt(index)
+            if (oauth.pending?.tabId == tab.id) oauth.cancel()
+            tab.webView.destroy()
+            savedTabs = ArrayList(tabState.flatMap { listOf(it.id, it.url.value) })
             if (tabState.isEmpty()) {
                 createAndAddTab()
             } else if (activeTabIndex >= tabState.size) {
@@ -193,7 +233,28 @@ fun MainScreen(
 
     LaunchedEffect(Unit) {
         if (tabState.isEmpty()) {
-            createAndAddTab()
+            val restored = savedTabs.toList().chunked(2)
+            val selected = activeTabIndex
+            if (restored.isEmpty()) createAndAddTab()
+            else {
+                restored.forEach { createAndAddTab(it[1], it[0]) }
+                activeTabIndex = selected.coerceIn(tabState.indices)
+            }
+        }
+    }
+
+    DisposableEffect(Unit) { onDispose { tabState.forEach { it.webView.destroy() } } }
+
+    LaunchedEffect(oauth.readyTabId, tabState.size) {
+        oauth.readyTabId?.let { id ->
+            if (tabState.isNotEmpty()) {
+                val index = tabState.indexOfFirst { it.id == id }
+                if (index >= 0) {
+                    activeTabIndex = index
+                    tabState[index].webView.loadUrl("${OAuthContract.ORIGIN}/notes")
+                } else createAndAddTab("${OAuthContract.ORIGIN}/notes", id)
+                oauth.consumed()
+            }
         }
     }
 
@@ -338,6 +399,7 @@ fun createWebView(
             ): Boolean {
                 val newWebView = WebView(context)
                 applyBaseWebViewSettings(newWebView, context)
+                initialize(newWebView)
 
                 val dialog = Dialog(context)
                 dialog.setContentView(newWebView)
@@ -467,4 +529,3 @@ fun WebViewContainer(
         }
     }
 }
-
