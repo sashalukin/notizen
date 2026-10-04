@@ -7,6 +7,12 @@ These are some of the core APIs and patterns demonstrated:
 - **[Android WebView API](https://developer.android.com/reference/android/webkit/WebView)**: Advanced custom web clients supporting multi-window/popup handling, custom file download interception, and offline connection state tracking.
 - **[Jetpack Compose](https://developer.android.com/jetpack/androidx/releases/compose)**: Fully declarative UI layers and dynamic tab state rendering.
 
+## Auth Tab experiment
+
+This branch replaces the old Custom Tab/OTC integration with `AuthTabIntent`. Only Google's authorization UI leaves WebView; its existing Auth.js callback finishes in the originating WebView. It never uses `/android-signin`, `/api/android-callback`, or `/api/exchange`.
+
+See [experiment and restoration notes](docs/auth-tab-experiment.md). The app requires an Auth Tab-capable browser and a signing certificate associated with `notizen.dev`; unsupported browsers fail explicitly rather than silently using the old flow.
+
 ## App Overview
 
 The primary interaction centers around the `WebView`. Developers can configure the app as a clean, immersive single-page viewer or toggle a multi-tabbed experience.

@@ -24,7 +24,6 @@ import android.net.Uri
 import android.os.Bundle
 import android.os.Environment
 import android.os.Message
-import android.util.Base64
 import android.view.ViewGroup
 import android.webkit.CookieManager
 import android.webkit.PermissionRequest
@@ -38,7 +37,6 @@ import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import androidx.browser.customtabs.CustomTabsIntent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -81,12 +79,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.net.toUri
 import com.google.android.samples.notizen.ui.theme.NotizenTheme
-import java.net.HttpURLConnection
-import java.net.URL
-import java.security.MessageDigest
-import java.security.SecureRandom
 import java.util.UUID
-import kotlin.concurrent.thread
 
 data class TabInstance(
     val id: String = UUID.randomUUID().toString(),
@@ -97,6 +90,7 @@ data class TabInstance(
 
 class MainActivity : ComponentActivity() {
     private var activeWebView: WebView? = null
+    private val googleAuthTab = GoogleAuthTab(this)
     private lateinit var notificationBridge: NotificationBridge
     private var notificationNote by mutableStateOf<String?>(null)
 
@@ -117,11 +111,6 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
 
         showWebsite(url = "https://notizen.dev", enableTabs = true)
-
-        // Google OAuth via Custom Tab (1/7).
-        // Requires additional changes on the backend which are already implemented on https://notizen.dev.
-        handleDeepLink(intent)
-
     }
 
     override fun onResume() {
@@ -137,9 +126,6 @@ class MainActivity : ComponentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         handleNotificationIntent(intent)
-        // Google OAuth via Custom Tab (2/7).
-        handleDeepLink(intent)
-
     }
 
     private fun showWebsite(url: String, enableTabs: Boolean) {
@@ -160,62 +146,11 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    // Google OAuth via Custom Tab (3/7).
-    private fun handleDeepLink(intent: Intent?) {
-        val uri = intent?.data ?: return
-        if (uri.scheme != "notizen" || uri.host != "auth") return
+    fun openGoogleAuthTab(view: WebView, uri: Uri): Boolean = googleAuthTab.open(view, uri)
 
-        val code = uri.getQueryParameter("code") ?: return
-        val verifier = codeVerifier
-
-        thread {
-            try {
-                val url = URL("https://notizen.dev/api/exchange")
-                val connection = url.openConnection() as HttpURLConnection
-                connection.requestMethod = "POST"
-                connection.setRequestProperty("Content-Type", "application/json")
-                connection.doOutput = true
-
-                val body = if (verifier != null) {
-                    """{"code":"$code","code_verifier":"$verifier"}"""
-                } else {
-                    """{"code":"$code"}"""
-                }
-                connection.outputStream.use { it.write(body.toByteArray()) }
-
-                if (connection.responseCode == 200) {
-                    val cookieHeaders = connection.headerFields["Set-Cookie"]
-
-                    if (cookieHeaders != null) {
-                        val cookieManager = CookieManager.getInstance()
-                        cookieManager.setAcceptCookie(true)
-
-                        for (cookie in cookieHeaders) {
-                            cookieManager.setCookie("https://notizen.dev", cookie)
-                        }
-                        cookieManager.flush()
-
-                        runOnUiThread {
-                            activeWebView?.loadUrl("https://notizen.dev/notes")
-                        }
-                    }
-                }
-                connection.disconnect()
-            } catch (e: Exception) {
-                e.printStackTrace()
-            }
-        }
-    }
-
-    // Google OAuth via Custom Tab (4/7).
-    companion object {
-        var codeVerifier: String? = null
-
-        fun generateAndStoreVerifier(): String {
-            val verifier = PKCEUtilsShowcase.generateCodeVerifier()
-            codeVerifier = verifier
-            return PKCEUtilsShowcase.generateCodeChallenge(verifier)
-        }
+    override fun onDestroy() {
+        googleAuthTab.clear()
+        super.onDestroy()
     }
 }
 
@@ -313,12 +248,11 @@ fun MainScreen(
 }
 
 /**
- * Shared custom WebViewClient that consolidates page loading, error states, and OAuth interception.
+ * Shared WebViewClient for page state and the Auth Tab experiment.
  */
 open class NotizenWebViewClient(
     private val context: Context,
-    private val isOfflineState: MutableState<Boolean>? = null,
-    private val onDismissDialog: (() -> Unit)? = null
+    private val isOfflineState: MutableState<Boolean>? = null
 ) : WebViewClient() {
 
     override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
@@ -339,19 +273,14 @@ open class NotizenWebViewClient(
         }
     }
 
-    // Google OAuth via Custom Tab (5/7).
+    // Auth.js begins in WebView, so its CSRF/PKCE cookies stay there.
+    // Only Google's authorization UI moves to Auth Tab.
     override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
-        val requestUrl = request?.url?.toString() ?: return false
-        if (requestUrl.contains("/api/auth/signin/google") || requestUrl.contains("accounts.google.com/v3/signin") || requestUrl.contains("accounts.google.com/o/oauth2") || requestUrl.contains("accounts.google.com/signin/oauth")) {
-            val challenge = MainActivity.generateAndStoreVerifier()
-            val authUrl = "https://notizen.dev/android-signin?code_challenge=$challenge"
-            val customTabsIntent = CustomTabsIntent.Builder().setShowTitle(true).build()
-            customTabsIntent.launchUrl(context, Uri.parse(authUrl))
-            onDismissDialog?.invoke()
-            return true
-        }
-        return false
+        if (view == null || request == null || !request.isForMainFrame) return false
+        if (!GoogleAuthContract.isGoogleAuthorization(request.url)) return false
+        return (context as? MainActivity)?.openGoogleAuthTab(view, request.url) ?: true
     }
+
 }
 
 fun applyBaseWebViewSettings(webView: WebView, context: Context) {
@@ -436,7 +365,7 @@ fun createWebView(
                     }
                 }
 
-                newWebView.webViewClient = NotizenWebViewClient(context, onDismissDialog = { dialog.dismiss() })
+                newWebView.webViewClient = NotizenWebViewClient(context)
 
                 val transport = resultMsg?.obj as? WebView.WebViewTransport
                 transport?.webView = newWebView
@@ -548,22 +477,5 @@ fun WebViewContainer(
                 )
             }
         }
-    }
-}
-
-// Google OAuth via Custom Tab (6/7).
-object PKCEUtilsShowcase {
-    fun generateCodeVerifier(): String {
-        val random = SecureRandom()
-        val bytes = ByteArray(32)
-        random.nextBytes(bytes)
-        return Base64.encodeToString(bytes, Base64.URL_SAFE or Base64.NO_PADDING or Base64.NO_WRAP)
-    }
-
-    fun generateCodeChallenge(verifier: String): String {
-        val bytes = verifier.toByteArray(Charsets.US_ASCII)
-        val messageDigest = MessageDigest.getInstance("SHA-256")
-        val digest = messageDigest.digest(bytes)
-        return Base64.encodeToString(digest, Base64.URL_SAFE or Base64.NO_PADDING or Base64.NO_WRAP)
     }
 }
