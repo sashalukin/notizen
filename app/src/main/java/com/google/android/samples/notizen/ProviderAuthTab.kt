@@ -11,12 +11,12 @@ import androidx.browser.customtabs.CustomTabsClient
 import java.lang.ref.WeakReference
 
 /** No application OTC or session transfer: complete the existing Auth.js flow in its original WebView. */
-class GoogleAuthTab(
+class ProviderAuthTab(
     private val activity: ComponentActivity,
     private val browserPackage: () -> String? = { findSupportedBrowser(activity) }
 ) {
     private var pending: Pending? = null
-    private data class Pending(val view: WeakReference<WebView>, val state: String?)
+    private data class Pending(val view: WeakReference<WebView>, val state: String?, val provider: OAuthProvider)
 
     private val launcher = AuthTabIntent.registerActivityResultLauncher(activity) { result ->
         val attempt = pending
@@ -32,9 +32,9 @@ class GoogleAuthTab(
         }
         val uri = result.resultUri
         if (result.resultCode == AuthTabIntent.RESULT_OK && uri != null &&
-            GoogleAuthContract.validCallback(uri, attempt.state)) {
+            AuthTabContract.validCallback(uri, attempt.state, attempt.provider)) {
             // The original WebView sends Auth.js's existing PKCE/nonce/state cookies.
-            // Auth.js redeems the Google code and sets its session cookie directly here.
+            // Auth.js redeems the provider code and sets its session cookie directly here.
             view.loadUrl(uri.toString())
         } else {
             val reason = when (result.resultCode) {
@@ -44,34 +44,35 @@ class GoogleAuthTab(
                 else -> "Sign-in did not complete. Please start again."
             }
             message(reason)
-            view.loadUrl("${GoogleAuthContract.ORIGIN}/signin")
+            view.loadUrl("${AuthTabContract.ORIGIN}/signin")
         }
     }
 
     fun open(view: WebView, uri: Uri): Boolean {
         if (pending != null) {
-            message("A Google sign-in is already in progress.")
+            message("A sign-in is already in progress.")
             return true
         }
-        if (!GoogleAuthContract.trustedPage(view.url) || !GoogleAuthContract.validAuthorization(uri)) {
-            message("This Google sign-in request is not supported by the experiment.")
+        val provider = OAuthProvider.fromAuthorization(uri)
+        if (provider == null || !AuthTabContract.trustedPage(view.url) || !AuthTabContract.validAuthorization(uri)) {
+            message("This sign-in request is not supported by the experiment.")
             return true // never fall back to the legacy three-endpoint flow
         }
         val browser = browserPackage()
         if (browser == null) {
             message("This experiment needs an Auth Tab-capable browser, such as Chrome 137 or newer.")
-            view.loadUrl("${GoogleAuthContract.ORIGIN}/signin")
+            view.loadUrl("${AuthTabContract.ORIGIN}/signin")
             return true
         }
-        pending = Pending(WeakReference(view), uri.getQueryParameter("state"))
+        pending = Pending(WeakReference(view), uri.getQueryParameter("state"), provider)
         try {
             CookieManager.getInstance().flush()
             AuthTabIntent.Builder().build().also { it.intent.setPackage(browser) }
-                .launch(launcher, uri, GoogleAuthContract.HOST, GoogleAuthContract.CALLBACK_PATH)
+                .launch(launcher, uri, AuthTabContract.HOST, provider.callbackPath)
         } catch (_: Exception) {
             pending = null
             message("Could not open Auth Tab. Please start again.")
-            view.loadUrl("${GoogleAuthContract.ORIGIN}/signin")
+            view.loadUrl("${AuthTabContract.ORIGIN}/signin")
         }
         return true
     }
@@ -93,7 +94,7 @@ class GoogleAuthTab(
 }
 
 /** Pure URI contract, also exercised in unit tests. Never log authorization or callback URLs. */
-object GoogleAuthContract {
+object AuthTabContract {
     const val ORIGIN = "https://notizen.dev"
     const val HOST = "notizen.dev"
     const val CALLBACK_PATH = "/api/auth/callback/google"
@@ -104,20 +105,27 @@ object GoogleAuthContract {
     fun trustedPage(value: String?): Boolean = value != null &&
         runCatching { httpsHost(Uri.parse(value), HOST) }.getOrDefault(false)
 
-    fun isGoogleAuthorization(uri: Uri): Boolean = httpsHost(uri, "accounts.google.com") &&
-        uri.path in setOf("/o/oauth2/v2/auth", "/o/oauth2/auth")
+    fun isProviderAuthorization(uri: Uri): Boolean = OAuthProvider.fromAuthorization(uri) != null
 
-    fun validAuthorization(uri: Uri): Boolean = isGoogleAuthorization(uri) &&
-        uri.getQueryParameters("redirect_uri") == listOf("$ORIGIN$CALLBACK_PATH") &&
-        uri.getQueryParameters("response_type") == listOf("code") &&
-        uri.getQueryParameters("code_challenge_method") == listOf("S256") &&
-        uri.getQueryParameters("code_challenge").singleOrNull()?.matches(Regex("[A-Za-z0-9_-]{43}")) == true &&
-        uri.getQueryParameters("client_id").singleOrNull()?.isNotBlank() == true &&
-        uri.getQueryParameters("state").size <= 1
+    fun validAuthorization(uri: Uri): Boolean {
+        val provider = OAuthProvider.fromAuthorization(uri) ?: return false
+        if (uri.getQueryParameters("redirect_uri") != listOf("$ORIGIN${provider.callbackPath}") ||
+            uri.getQueryParameters("response_type") != listOf("code") ||
+            uri.getQueryParameters("client_id").singleOrNull()?.isNotBlank() != true ||
+            uri.getQueryParameters("state").size > 1) return false
+        return when (provider) {
+            OAuthProvider.GOOGLE -> uri.getQueryParameters("code_challenge_method") == listOf("S256") &&
+                uri.getQueryParameters("code_challenge").singleOrNull()?.matches(Regex("[A-Za-z0-9_-]{43}")) == true
+            // Clever's Auth.js integration requires state, not an undocumented PKCE flow.
+            OAuthProvider.CLEVER -> uri.getQueryParameters("state").singleOrNull()?.isNotBlank() == true
+        }
+    }
 
-    fun validCallback(uri: Uri, expectedState: String?): Boolean = httpsHost(uri, HOST) &&
-        uri.encodedPath == CALLBACK_PATH && uri.getQueryParameters("error").isEmpty() &&
+    fun validCallback(uri: Uri, expectedState: String?, provider: OAuthProvider = OAuthProvider.GOOGLE): Boolean =
+        httpsHost(uri, HOST) && uri.encodedPath == provider.callbackPath &&
+        uri.getQueryParameters("error").isEmpty() &&
         uri.getQueryParameters("code").singleOrNull()?.isNotBlank() == true &&
+        (provider != OAuthProvider.CLEVER || !expectedState.isNullOrBlank()) &&
         (if (expectedState == null) uri.getQueryParameters("state").isEmpty()
          else uri.getQueryParameters("state") == listOf(expectedState))
 }

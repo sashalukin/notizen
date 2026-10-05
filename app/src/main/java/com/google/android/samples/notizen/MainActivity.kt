@@ -90,7 +90,7 @@ data class TabInstance(
 
 class MainActivity : ComponentActivity() {
     private var activeWebView: WebView? = null
-    private val googleAuthTab = GoogleAuthTab(this)
+    private val providerAuthTab = ProviderAuthTab(this)
     private lateinit var notificationBridge: NotificationBridge
     private var notificationNote by mutableStateOf<String?>(null)
 
@@ -146,7 +146,7 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    fun openGoogleAuthTab(view: WebView, uri: Uri): Boolean = googleAuthTab.open(view, uri)
+    fun openProviderAuthTab(view: WebView, uri: Uri): Boolean = providerAuthTab.open(view, uri)
 
     override fun onStop() {
         // Persist session refreshes/logout from SPA requests before the process can be killed.
@@ -155,7 +155,7 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
-        googleAuthTab.clear()
+        providerAuthTab.clear()
         super.onDestroy()
     }
 }
@@ -268,7 +268,7 @@ open class NotizenWebViewClient(
 
     override fun onPageFinished(view: WebView?, url: String?) {
         super.onPageFinished(view, url)
-        if (GoogleAuthContract.trustedPage(url)) {
+        if (AuthTabContract.trustedPage(url)) {
             // The Auth.js callback sets the session cookie in WebView and redirects to /notes.
             // Save those completed network cookie writes, not just the pre-login PKCE cookie.
             CookieManager.getInstance().flush()
@@ -289,11 +289,11 @@ open class NotizenWebViewClient(
     }
 
     // Auth.js begins in WebView, so its CSRF/PKCE cookies stay there.
-    // Only Google's authorization UI moves to Auth Tab.
+    // Only the provider's authorization UI moves to Auth Tab.
     override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
         if (view == null || request == null || !request.isForMainFrame) return false
-        if (!GoogleAuthContract.isGoogleAuthorization(request.url)) return false
-        return (context as? MainActivity)?.openGoogleAuthTab(view, request.url) ?: true
+        if (!AuthTabContract.isProviderAuthorization(request.url)) return false
+        return (context as? MainActivity)?.openProviderAuthTab(view, request.url) ?: true
     }
 
 }

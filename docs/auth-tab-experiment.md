@@ -55,3 +55,16 @@ The archived Cloud Build source matched every included tracked file from the web
 To roll back the website, route the `notizen` Cloud Run service in `us-central1`, project `main-tokenizer-485420-h8`, to `notizen-00051-yum`, or rebuild the saved source commit. Android rollback requires rebuilding/installing the saved source with the same signing identity. These are source/deployment recovery points, not backups of user notes, uploaded files, or secret values.
 
 The website experiment branch removes the old three routes to prove independence. The association-only live update intentionally retains those routes for older Android clients. Do not deploy the route-removal commit as a general rollout while such clients still depend on it.
+
+## Clever extension
+
+The experiment also recognizes `https://clever.com/oauth/authorize` and captures
+`https://notizen.dev/api/auth/callback/clever`. The pending attempt is bound to the
+selected provider and its state, so a Google callback cannot finish a Clever attempt.
+Clever uses Auth.js state cookies and server-side client authentication, rather than
+assuming support for Google's PKCE flow. The originating WebView retains the state
+cookie; the callback finishes through the existing Auth.js route with no OTC handoff.
+Google's PKCE checks remain unchanged.
+
+Clever developer credentials and a sandbox district/test user must be configured on
+the website before the Clever button appears. Real Clever login is not yet tested.
