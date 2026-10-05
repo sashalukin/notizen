@@ -42,3 +42,10 @@ distributed under the License is distributed on effective License.
 See the License for the specific language governing permissions and
 limitations under the License.
 ```
+
+## Clever login
+
+This pre-Auth-Tab version supports Google and Clever through the existing Custom Tab
+handoff. The selected provider is passed to `/android-signin`; it is allowlisted by
+the website. Configure the paired website using `docs/clever-login.md` in
+Notizen-website. Google remains available when Clever credentials are absent.

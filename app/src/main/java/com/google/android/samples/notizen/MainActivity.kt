@@ -339,19 +339,23 @@ open class NotizenWebViewClient(
         }
     }
 
-    // Google OAuth via Custom Tab (5/7).
+    // Preserve the original Custom Tab handoff, selecting only known providers.
     override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
-        val requestUrl = request?.url?.toString() ?: return false
-        if (requestUrl.contains("/api/auth/signin/google") || requestUrl.contains("accounts.google.com/v3/signin") || requestUrl.contains("accounts.google.com/o/oauth2") || requestUrl.contains("accounts.google.com/signin/oauth")) {
-            val challenge = MainActivity.generateAndStoreVerifier()
-            val authUrl = "https://notizen.dev/android-signin?code_challenge=$challenge"
-            val customTabsIntent = CustomTabsIntent.Builder().setShowTitle(true).build()
-            customTabsIntent.launchUrl(context, Uri.parse(authUrl))
-            onDismissDialog?.invoke()
-            return true
-        }
-        return false
+        if (view == null || request == null || !request.isForMainFrame) return false
+        val provider = OAuthProvider.fromAuthorization(request.url)
+            ?: OAuthProvider.fromSignIn(request.url) ?: return false
+        val page = view.url?.let(Uri::parse) ?: return true
+        if (!OAuthProvider.secureHost(page, "notizen.dev")) return true
+        val challenge = MainActivity.generateAndStoreVerifier()
+        val authUrl = Uri.parse("https://notizen.dev/android-signin").buildUpon()
+            .appendQueryParameter("code_challenge", challenge)
+            .appendQueryParameter("provider", provider.id).build()
+        val customTabsIntent = CustomTabsIntent.Builder().setShowTitle(true).build()
+        customTabsIntent.launchUrl(context, authUrl)
+        onDismissDialog?.invoke()
+        return true
     }
+
 }
 
 fun applyBaseWebViewSettings(webView: WebView, context: Context) {
