@@ -116,8 +116,8 @@ object AuthTabContract {
         return when (provider) {
             OAuthProvider.GOOGLE -> uri.getQueryParameters("code_challenge_method") == listOf("S256") &&
                 uri.getQueryParameters("code_challenge").singleOrNull()?.matches(Regex("[A-Za-z0-9_-]{43}")) == true
-            // Clever's Auth.js integration requires state, not an undocumented PKCE flow.
-            OAuthProvider.CLEVER -> uri.getQueryParameters("state").singleOrNull()?.isNotBlank() == true
+            // These confidential-client integrations use a required state cookie.
+            OAuthProvider.CLEVER, OAuthProvider.DISCORD -> uri.getQueryParameters("state").singleOrNull()?.isNotBlank() == true
         }
     }
 
@@ -125,7 +125,7 @@ object AuthTabContract {
         httpsHost(uri, HOST) && uri.encodedPath == provider.callbackPath &&
         uri.getQueryParameters("error").isEmpty() &&
         uri.getQueryParameters("code").singleOrNull()?.isNotBlank() == true &&
-        (provider != OAuthProvider.CLEVER || !expectedState.isNullOrBlank()) &&
+        (provider == OAuthProvider.GOOGLE || !expectedState.isNullOrBlank()) &&
         (if (expectedState == null) uri.getQueryParameters("state").isEmpty()
          else uri.getQueryParameters("state") == listOf(expectedState))
 }
