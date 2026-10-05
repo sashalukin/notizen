@@ -33,7 +33,13 @@ One login attempt is allowed at a time. Cancellation, malformed results, verific
 - The paired website's `tests/auth-tab.test.mjs` runs the installed Auth.js Google provider through real CSRF/PKCE processing and JWT session issuance, with only the external Google service mocked. It proves the original cookie store can finish login and an empty cookie store cannot; replay is rejected.
 - Website production build and regression tests, including a disposable local PostgreSQL database.
 
-No Android device/emulator or real Google account login was available during implementation. These checks establish the application-side mechanism, not that Chrome/Google have been verified end to end on a phone. No APK was generated as part of the experiment checks.
+Initial implementation was tested without a connected device. The user subsequently confirmed successful real Google login in an emulator after upgrading Chrome and associating the local signing certificate. Other browsers/providers remain unverified. No APK was generated on the development server.
+
+## Staying signed in
+
+Auth.js uses its existing persistent session cookie with a default 30-day lifetime. Android now flushes WebView cookies after first-party page loads and when the activity stops, including refreshed sessions and logout changes. This saves the cookie already issued by the normal callback; it does not copy Auth Tab cookies, extend session lifetime, or replay the Google callback on restart.
+
+The user reported another sign-in prompt after reopening; the missing explicit post-login flush is a suspected cause, not a device-confirmed diagnosis. The backend regression test verifies a fresh cookie jar can authenticate using only the unexpired persistent session cookie. Verify the Android change by signing in, opening notes, closing the app, then launching it from its icon. Confirm logout stays logged out too. Uninstalling, clearing app data, or wiping emulator data removes the stored session and requires login again.
 
 ## Restore the pre-experiment code
 

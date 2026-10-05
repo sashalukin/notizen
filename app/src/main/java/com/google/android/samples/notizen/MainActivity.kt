@@ -148,6 +148,12 @@ class MainActivity : ComponentActivity() {
 
     fun openGoogleAuthTab(view: WebView, uri: Uri): Boolean = googleAuthTab.open(view, uri)
 
+    override fun onStop() {
+        // Persist session refreshes/logout from SPA requests before the process can be killed.
+        CookieManager.getInstance().flush()
+        super.onStop()
+    }
+
     override fun onDestroy() {
         googleAuthTab.clear()
         super.onDestroy()
@@ -258,6 +264,15 @@ open class NotizenWebViewClient(
     override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
         super.onPageStarted(view, url, favicon)
         isOfflineState?.value = false
+    }
+
+    override fun onPageFinished(view: WebView?, url: String?) {
+        super.onPageFinished(view, url)
+        if (GoogleAuthContract.trustedPage(url)) {
+            // The Auth.js callback sets the session cookie in WebView and redirects to /notes.
+            // Save those completed network cookie writes, not just the pre-login PKCE cookie.
+            CookieManager.getInstance().flush()
+        }
     }
 
     override fun onReceivedError(view: WebView?, request: WebResourceRequest?, error: WebResourceError?) {
