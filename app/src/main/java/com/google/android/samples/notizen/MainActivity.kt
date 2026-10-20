@@ -20,7 +20,6 @@ import android.app.DownloadManager
 import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
-import android.net.Uri
 import android.os.Bundle
 import android.os.Environment
 import android.os.Message
@@ -37,6 +36,12 @@ import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.lifecycle.ViewModelProvider
+import androidx.browser.customtabs.CustomTabsIntent
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -90,7 +95,7 @@ data class TabInstance(
 
 class MainActivity : ComponentActivity() {
     private var activeWebView: WebView? = null
-    private val providerAuthTab = ProviderAuthTab(this)
+    private val oauth by lazy { ViewModelProvider(this)[OAuthState::class.java] }
     private lateinit var notificationBridge: NotificationBridge
     private var notificationNote by mutableStateOf<String?>(null)
 
@@ -111,6 +116,8 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
 
         showWebsite(url = "https://notizen.dev", enableTabs = true)
+        oauth.receive(intent)
+        if (OAuthContract.callbackCode(intent) != null) intent.data = null
     }
 
     override fun onResume() {
@@ -126,17 +133,46 @@ class MainActivity : ComponentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         handleNotificationIntent(intent)
+        oauth.receive(intent)
+        if (OAuthContract.callbackCode(intent) != null) intent.data = null
+    }
+
+    fun openCustomTab(provider: OAuthProvider, tabId: String = "oauth-return") {
+        oauth.begin(tabId, provider)?.let { url ->
+            try { CustomTabsIntent.Builder().build().launchUrl(this, url) }
+            catch (_: Exception) { oauth.launchFailed() }
+        }
+    }
+
+    override fun onStop() {
+        CookieManager.getInstance().flush()
+        super.onStop()
     }
 
     private fun showWebsite(url: String, enableTabs: Boolean) {
         setContent {
             NotizenTheme {
+                oauth.error?.let { message ->
+                    AlertDialog(onDismissRequest = { oauth.error = null },
+                        title = { Text("Sign-in") }, text = { Text(message) },
+                        confirmButton = { TextButton(onClick = { oauth.error = null }) { Text("OK") } })
+                }
+                if (oauth.pending != null) {
+                    AlertDialog(onDismissRequest = { oauth.cancel() },
+                        title = { Text("Signing in") },
+                        text = { Text(if (oauth.phase == "waiting") "Finish sign-in in the browser. If prompted, tap Open Notizen." else "Completing sign-in…") },
+                        confirmButton = { TextButton(enabled = oauth.phase != "installing", onClick = { oauth.cancel() }) { Text("Cancel") } })
+                }
                 Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
                     MainScreen(
                         initialUrl = url,
                         enableTabs = enableTabs,
                         onWebViewCreated = { activeWebView = it },
-                        initializeWebView = { notificationBridge.install(it) },
+                        initializeWebView = { view, tabId ->
+                            notificationBridge.install(view)
+                            installOAuthBridge(view) { provider -> openCustomTab(provider, tabId) }
+                        },
+                        oauth = oauth,
                         notificationNote = notificationNote,
                         consumeNotification = { notificationNote = null },
                         modifier = Modifier.padding(innerPadding).fillMaxSize()
@@ -146,18 +182,6 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    fun openProviderAuthTab(view: WebView, uri: Uri): Boolean = providerAuthTab.open(view, uri)
-
-    override fun onStop() {
-        // Persist session refreshes/logout from SPA requests before the process can be killed.
-        CookieManager.getInstance().flush()
-        super.onStop()
-    }
-
-    override fun onDestroy() {
-        providerAuthTab.clear()
-        super.onDestroy()
-    }
 }
 
 @Composable
@@ -165,28 +189,37 @@ fun MainScreen(
     initialUrl: String,
     enableTabs: Boolean,
     onWebViewCreated: (WebView) -> Unit,
-    initializeWebView: (WebView) -> Unit,
+    initializeWebView: (WebView, String) -> Unit,
+    oauth: OAuthState,
     notificationNote: String?,
     consumeNotification: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
     val tabState = remember { mutableStateListOf<TabInstance>() }
-    var activeTabIndex by remember { mutableIntStateOf(0) }
+    var activeTabIndex by rememberSaveable { mutableIntStateOf(0) }
+    var savedTabs by rememberSaveable { mutableStateOf(arrayListOf<String>()) }
     val isOfflineState = remember { mutableStateOf(false) }
 
-    fun createAndAddTab(url: String = initialUrl) {
+    fun createAndAddTab(url: String = initialUrl, id: String = UUID.randomUUID().toString()) {
         var newTab: TabInstance? = null
         val webView = createWebView(
             context = context,
             initialUrl = url,
-            onTitleReceived = { title -> newTab?.title?.value = title },
+            onTitleReceived = { title ->
+                newTab?.let { tab ->
+                    tab.title.value = title
+                    tab.url.value = tab.webView.url ?: url
+                    savedTabs = ArrayList(tabState.flatMap { listOf(it.id, it.url.value) })
+                }
+            },
             isOfflineState = isOfflineState,
-            initialize = initializeWebView
+            initialize = { initializeWebView(it, id) }
         )
-        val tab = TabInstance(webView = webView, url = mutableStateOf(url))
+        val tab = TabInstance(id = id, webView = webView, url = mutableStateOf(url))
         newTab = tab
         tabState.add(tab)
+        savedTabs = ArrayList(tabState.flatMap { listOf(it.id, it.url.value) })
         activeTabIndex = tabState.lastIndex
     }
 
@@ -194,6 +227,9 @@ fun MainScreen(
         val index = tabState.indexOf(tab)
         if (index != -1) {
             tabState.removeAt(index)
+            if (oauth.pending?.tabId == tab.id) oauth.cancel()
+            tab.webView.destroy()
+            savedTabs = ArrayList(tabState.flatMap { listOf(it.id, it.url.value) })
             if (tabState.isEmpty()) {
                 createAndAddTab()
             } else if (activeTabIndex >= tabState.size) {
@@ -204,7 +240,28 @@ fun MainScreen(
 
     LaunchedEffect(Unit) {
         if (tabState.isEmpty()) {
-            createAndAddTab()
+            val restored = savedTabs.toList().chunked(2)
+            val selected = activeTabIndex
+            if (restored.isEmpty()) createAndAddTab()
+            else {
+                restored.forEach { createAndAddTab(it[1], it[0]) }
+                activeTabIndex = selected.coerceIn(tabState.indices)
+            }
+        }
+    }
+
+    DisposableEffect(Unit) { onDispose { tabState.forEach { it.webView.destroy() } } }
+
+    LaunchedEffect(oauth.readyTabId, tabState.size) {
+        oauth.readyTabId?.let { id ->
+            if (tabState.isNotEmpty()) {
+                val index = tabState.indexOfFirst { it.id == id }
+                if (index >= 0) {
+                    activeTabIndex = index
+                    tabState[index].webView.loadUrl("${OAuthContract.ORIGIN}/notes")
+                } else createAndAddTab("${OAuthContract.ORIGIN}/notes", id)
+                oauth.consumed()
+            }
         }
     }
 
@@ -254,11 +311,12 @@ fun MainScreen(
 }
 
 /**
- * Shared WebViewClient for page state and the Auth Tab experiment.
+ * Shared custom WebViewClient that consolidates page loading, error states, and OAuth interception.
  */
 open class NotizenWebViewClient(
     private val context: Context,
-    private val isOfflineState: MutableState<Boolean>? = null
+    private val isOfflineState: MutableState<Boolean>? = null,
+    private val onDismissDialog: (() -> Unit)? = null
 ) : WebViewClient() {
 
     override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
@@ -268,11 +326,18 @@ open class NotizenWebViewClient(
 
     override fun onPageFinished(view: WebView?, url: String?) {
         super.onPageFinished(view, url)
-        if (AuthTabContract.trustedPage(url)) {
-            // The Auth.js callback sets the session cookie in WebView and redirects to /notes.
-            // Save those completed network cookie writes, not just the pre-login PKCE cookie.
+        if (url != null && OAuthProvider.secureHost(android.net.Uri.parse(url), "notizen.dev")) {
             CookieManager.getInstance().flush()
         }
+    }
+
+    override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
+        if (view == null || request == null || !request.isForMainFrame) return false
+        val provider = OAuthProvider.fromSignIn(request.url)
+            ?: OAuthProvider.fromAuthorization(request.url) ?: return false
+        (context as? MainActivity)?.openCustomTab(provider)
+        onDismissDialog?.invoke()
+        return true
     }
 
     override fun onReceivedError(view: WebView?, request: WebResourceRequest?, error: WebResourceError?) {
@@ -286,14 +351,6 @@ open class NotizenWebViewClient(
                 isOfflineState?.value = true
             }
         }
-    }
-
-    // Auth.js begins in WebView, so its CSRF/PKCE cookies stay there.
-    // Only the provider's authorization UI moves to Auth Tab.
-    override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
-        if (view == null || request == null || !request.isForMainFrame) return false
-        if (!AuthTabContract.isProviderAuthorization(request.url)) return false
-        return (context as? MainActivity)?.openProviderAuthTab(view, request.url) ?: true
     }
 
 }
@@ -365,6 +422,7 @@ fun createWebView(
             ): Boolean {
                 val newWebView = WebView(context)
                 applyBaseWebViewSettings(newWebView, context)
+                initialize(newWebView)
 
                 val dialog = Dialog(context)
                 dialog.setContentView(newWebView)
@@ -380,7 +438,7 @@ fun createWebView(
                     }
                 }
 
-                newWebView.webViewClient = NotizenWebViewClient(context)
+                newWebView.webViewClient = NotizenWebViewClient(context, onDismissDialog = { dialog.dismiss() })
 
                 val transport = resultMsg?.obj as? WebView.WebViewTransport
                 transport?.webView = newWebView

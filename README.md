@@ -7,44 +7,14 @@ These are some of the core APIs and patterns demonstrated:
 - **[Android WebView API](https://developer.android.com/reference/android/webkit/WebView)**: Advanced custom web clients supporting multi-window/popup handling, custom file download interception, and offline connection state tracking.
 - **[Jetpack Compose](https://developer.android.com/jetpack/androidx/releases/compose)**: Fully declarative UI layers and dynamic tab state rendering.
 
-## Auth Tab experiment
+## Custom Tab sign-in
 
-This branch replaces the old Custom Tab/OTC integration with `AuthTabIntent`. Only Google's authorization UI leaves WebView; its existing Auth.js callback finishes in the originating WebView. It never uses `/android-signin`, `/api/android-callback`, or `/api/exchange`.
+The `fix/restore-custom-tabs` branch restores browser-completed OAuth for Google and Discord.
+The app opens `CustomTabsIntent`, receives a PKCE-bound one-time Notizen code through
+`notizen://auth`, exchanges it at `/api/exchange`, waits for every cookie write and opens notes.
+There is no Auth Tab API or browser-version/Digital Asset Links requirement for login.
 
-See [experiment and restoration notes](docs/auth-tab-experiment.md). The app requires an Auth Tab-capable browser and a signing certificate associated with `notizen.dev`; unsupported browsers fail explicitly rather than silently using the old flow.
+Website counterpart: `sashalukin/Notizen-website`, branch `fix/restore-custom-tabs`.
+See [Custom Tab flow](docs/custom-tab-login.md).
 
-## App Overview
-
-The primary interaction centers around the `WebView`. Developers can configure the app as a clean, immersive single-page viewer or toggle a multi-tabbed experience.
-
-Here are the main features included out-of-the-box:
-
-- **Single-Line Entry Point**: Configured via a highly descriptive entry point directly inside `MainActivity.kt`.
-- **Multi-Window / Popup Support**: Full interception of `window.open()` and `target="_blank"` navigation requests natively rendered inside Android dialog overlays.
-- **Native Download Hooking**: Integration with the native Android `DownloadManager` to support file downloads.
-
-## Quickstart Configuration
-
-To adapt this template for your own web application, open `MainActivity.kt` and customize the entry point located inside `onCreate()`:
-
-```kotlin
-// Pass your website URL and choose whether to enable tabbed navigation.
-showWebsite(url = "https://yourwebsite.com", enableTabs = true)
-```
-
-## License
-
-```
-Copyright 2026 The Android Open Source Project
-
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-    https://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on effective License.
-See the License for the specific language governing permissions and
-limitations under the License.
-```
+The former experiment remains on `experiment/auth-tab-no-handoff` (Android commit `550aa72`).
