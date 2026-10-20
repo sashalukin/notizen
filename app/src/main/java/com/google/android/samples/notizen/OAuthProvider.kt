@@ -4,6 +4,7 @@ import android.net.Uri
 
 enum class OAuthProvider(val id: String, val displayName: String, val host: String, val paths: Set<String>) {
     GOOGLE("google", "Google", "accounts.google.com", setOf("/o/oauth2/v2/auth", "/o/oauth2/auth")),
+    CLASSLINK("classlink", "ClassLink", "launchpad.classlink.com", setOf("/oauth2/v2/auth")),
     CLEVER("clever", "Clever", "clever.com", setOf("/oauth/authorize")),
     DISCORD("discord", "Discord", "discord.com", setOf("/oauth2/authorize", "/api/oauth2/authorize"));
 

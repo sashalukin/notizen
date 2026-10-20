@@ -9,7 +9,8 @@ These are some of the core APIs and patterns demonstrated:
 
 ## Custom Tab sign-in
 
-The `fix/restore-custom-tabs` branch restores browser-completed OAuth for Google and Discord.
+The `fix/restore-custom-tabs` branch restores browser-completed OAuth for Google, Discord, Clever, and ClassLink.
+Clever/ClassLink buttons activate only after the website has their OAuth application configuration.
 The app opens `CustomTabsIntent`, receives a PKCE-bound one-time Notizen code through
 `notizen://auth`, exchanges it at `/api/exchange`, waits for every cookie write and opens notes.
 There is no Auth Tab API or browser-version/Digital Asset Links requirement for login.

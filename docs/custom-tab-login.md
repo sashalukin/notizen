@@ -1,6 +1,6 @@
 # Restored Custom Tab OAuth
 
-1. Google/Discord buttons use an origin-restricted Android message bridge when available.
+1. Provider buttons use an origin-restricted Android message bridge when available.
    Normal browsers keep their regular Auth.js login. Older app versions can still intercept
    provider authorization navigations.
 2. Android retains a random verifier in an activity ViewModel, and opens
@@ -18,7 +18,8 @@ No Auth Tab API is used. No new provider redirect registration or signing-finger
 association is needed for this Custom Tab handoff. Existing assetlinks.json is retained
 because it is harmless and may be used for other links.
 
-Google and Discord remain enabled as configured. Clever is not configured for production.
+Google and Discord remain enabled as configured. Clever and ClassLink are supported but require
+website OAuth client configuration. See the [website setup guide](https://github.com/sashalukin/Notizen-website/blob/fix/restore-custom-tabs/docs/school-sso.md).
 The callback wire format (`code` UUID + `code_verifier`) remains compatible with old clients.
 
 The pending verifier survives activity recreation, not process death. If Android kills the
